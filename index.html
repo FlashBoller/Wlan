@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>OBD Fehlerleser</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+/* Layout: eine schmale Werkstatt-Spalte, Status oben, Fehlercodes als Liste darunter */
+:root {
+  --bg: #eef0f2;
+  --surface: #ffffff;
+  --fg: #1b2026;
+  --muted: #5d6670;
+  --line: #d5d9de;
+  --accent: #1f5fbf;
+  --accent-fg: #ffffff;
+  --mil: #e08a00;
+  --mil-soft: #fff1d9;
+  --ok: #1e8a4c;
+  --ok-soft: #e1f3e8;
+  --bad: #c2362b;
+  --bad-soft: #fbe5e2;
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-code: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418; --surface: #1a1f25; --fg: #e7eaee; --muted: #9aa3ad; --line: #2c333b;
+    --accent: #5b9bff; --accent-fg: #0b1220; --mil: #ffa826; --mil-soft: #3a2a10;
+    --ok: #4cc47f; --ok-soft: #14301f; --bad: #ff6b5e; --bad-soft: #3a1714;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--fg); font: 15px/1.5 var(--font-ui);
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: max(24px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 560px; margin: 0 auto; display: grid; gap: 16px; padding-block: 20px; }
+header h1 { font-size: 22px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+header p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 12px; min-width: 0; }
+.panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0; font-weight: 600; }
+
+.conn { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line); flex: none; }
+.dot.on { background: var(--ok); }
+.dot.busy { background: var(--mil); animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .dot.busy { animation: none; } }
+.conn-text { flex: 1; min-width: 0; font-weight: 500; }
+.conn-text small { display: block; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+
+.btns { display: flex; gap: 8px; flex-wrap: wrap; }
+button {
+  font: 600 15px var(--font-ui); border-radius: 10px; padding: 12px 16px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--fg); cursor: pointer; flex: 1 1 auto; min-height: 46px;
+}
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+button.danger { color: var(--bad); border-color: var(--bad); }
+button:disabled { opacity: .45; cursor: default; }
+button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.gauges { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.gauge { border: 1px solid var(--line); border-radius: 10px; padding: 10px; min-width: 0; }
+.gauge span { display: block; font-size: 12px; color: var(--muted); }
+.gauge b { font: 600 18px var(--font-code); font-variant-numeric: tabular-nums; }
+.gauge.mil-on { background: var(--mil-soft); border-color: var(--mil); }
+.gauge.mil-on b { color: var(--mil); }
+
+.notice { border-radius: 10px; padding: 12px; font-size: 14px; }
+.notice.warn { background: var(--mil-soft); }
+.notice.err { background: var(--bad-soft); color: var(--fg); }
+.notice.good { background: var(--ok-soft); }
+.notice strong { display: block; }
+
+.group-title { font-weight: 600; }
+.group-title small { display: block; color: var(--muted); font-weight: 400; font-size: 13px; }
+ul.codes { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+ul.codes li { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; align-items: baseline; border-top: 1px solid var(--line); padding-top: 8px; }
+ul.codes li:first-child { border-top: 0; padding-top: 0; }
+.code { font: 600 17px var(--font-code); letter-spacing: 0.02em; }
+.desc { min-width: 0; }
+.desc small { display: block; color: var(--muted); font-size: 13px; }
+.empty { color: var(--muted); font-size: 14px; margin: 0; }
+.tag { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 99px; background: var(--mil-soft); color: var(--fg); }
+
+ol.steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; }
+details summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+pre.log { font: 12px/1.45 var(--font-code); background: var(--bg); border-radius: 8px; padding: 10px; max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; }
+
+.confirm { display: grid; gap: 10px; background: var(--bad-soft); border-radius: 10px; padding: 12px; }
+footer { color: var(--muted); font-size: 12px; text-align: center; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>OBD Fehlerleser</h1>
+    <p>Fehlerspeicher über einen Bluetooth-LE ELM327-Adapter auslesen</p>
+  </header>
+
+  <section class="panel" id="unsupported" hidden>
+    <div class="notice err">
+      <strong>Dieser Browser kann kein Bluetooth.</strong>
+      Safari und Chrome auf dem iPhone unterstützen kein Web Bluetooth. Installiere die kostenlose App
+      <b>Bluefy – Web BLE Browser</b> aus dem App Store und öffne diese Seite dort.
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Verbindung</h2>
+    <div class="conn">
+      <span class="dot" id="dot"></span>
+      <div class="conn-text" id="connText">Nicht verbunden<small>Zündung an, Adapter eingesteckt</small></div>
+    </div>
+    <div class="btns">
+      <button class="primary" id="btnConnect" type="button">Adapter verbinden</button>
+      <button id="btnDisconnect" type="button" hidden>Trennen</button>
+    </div>
+    <div class="gauges">
+      <div class="gauge" id="gMil"><span>Kontrollleuchte</span><b id="vMil">–</b></div>
+      <div class="gauge"><span>Fehler laut ECU</span><b id="vCount">–</b></div>
+      <div class="gauge"><span>Batterie</span><b id="vVolt">–</b></div>
+    </div>
+  </section>
+
+  <section class="panel" id="actions">
+    <h2>Fehlerspeicher</h2>
+    <div class="btns">
+      <button class="primary" id="btnRead" type="button" disabled>Fehler auslesen</button>
+      <button id="btnCopy" type="button" disabled>Codes kopieren</button>
+    </div>
+    <div id="result">
+      <div class="notice warn" id="startHint">
+        <strong>So geht's</strong>
+        <ol class="steps">
+          <li>Adapter in die OBD-Buchse stecken (meist unter dem Lenkrad).</li>
+          <li>Zündung einschalten. Motor kann laufen.</li>
+          <li><b>Adapter verbinden</b> tippen und den Adapter in der Liste wählen (oft „OBDII“, „IOS-Vlink“, „Vgate“ o. ä.).</li>
+          <li><b>Fehler auslesen</b> tippen.</li>
+        </ol>
+      </div>
+    </div>
+    <div class="btns">
+      <button id="btnDemo" type="button">Beispiel ansehen</button>
+      <button class="danger" id="btnClear" type="button" disabled>Fehler löschen …</button>
+    </div>
+    <div class="confirm" id="confirmBox" hidden>
+      <div><strong>Fehlerspeicher wirklich löschen?</strong>
+        Damit werden alle Codes, eingefrorene Daten und Bereitschaftstests zurückgesetzt. Bei einem echten Defekt kommt der Fehler wieder. Nach dem Löschen ist das Auto eine Weile nicht „bereit“ für die HU/AU.</div>
+      <div class="btns">
+        <button id="btnClearNo" type="button">Abbrechen</button>
+        <button class="danger" id="btnClearYes" type="button">Ja, löschen</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <details>
+      <summary>Protokoll (für die Fehlersuche)</summary>
+      <pre class="log" id="log"></pre>
+    </details>
+  </section>
+
+  <footer>Liest nur standardisierte OBD-II-Codes (Motor/Abgas). Herstellerspezifische Steuergeräte wie ABS oder Airbag sind meist nicht erreichbar.</footer>
+</main>
+
+<script>
+"use strict";
+
+/* ---------- Bekannte BLE-Profile von ELM327-Adaptern ---------- */
+const SERVICES = [
+  0xfff0, 0xffe0, 0x18f0, 0xffe5, 0xfee7,
+  "e7810a71-73ae-499d-8c15-faa9aef0c3f2",  // Vlinker / LELink
+  "0000ffe0-0000-1000-8000-00805f9b34fb",
+  "000018f0-0000-1000-8000-00805f9b34fb",
+];
+
+const $ = (id) => document.getElementById(id);
+const logEl = $("log");
+function log(msg) {
+  const t = new Date().toLocaleTimeString("de-DE");
+  logEl.textContent += `[${t}] ${msg}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+let device = null, rxChar = null, txChar = null;
+let rxBuffer = "", pending = null, lastCodes = [];
+const enc = new TextEncoder(), dec = new TextDecoder();
+
+/* ---------- Status-Anzeige ---------- */
+function setStatus(state, text, sub) {
+  $("dot").className = "dot" + (state === "on" ? " on" : state === "busy" ? " busy" : "");
+  $("connText").innerHTML = "";
+  $("connText").append(text);
+  const s = document.createElement("small"); s.textContent = sub || ""; $("connText").append(s);
+  const connected = state === "on";
+  $("btnConnect").hidden = connected;
+  $("btnDisconnect").hidden = !connected;
+  $("btnRead").disabled = !connected;
+  $("btnClear").disabled = !connected;
+}
+
+/* ---------- Verbindung ---------- */
+async function connect() {
+  if (!navigator.bluetooth) { $("unsupported").hidden = false; return; }
+  try {
+    setStatus("busy", "Suche Adapter …", "Wähle deinen Adapter in der Liste");
+    device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: SERVICES });
+    device.addEventListener("gattserverdisconnected", onDisconnected);
+    log(`Gerät gewählt: ${device.name || "(ohne Namen)"}`);
+    setStatus("busy", "Verbinde …", device.name || "");
+    const server = await device.gatt.connect();
+    await findCharacteristics(server);
+    await rxChar.startNotifications();
+    rxChar.addEventListener("characteristicvaluechanged", onData);
+    setStatus("busy", "Initialisiere Adapter …", device.name || "");
+    await initElm();
+    setStatus("on", "Verbunden", device.name || "OBD-Adapter");
+    await readOverview();
+  } catch (e) {
+    log("Fehler: " + e.message);
+    const cancelled = e.name === "NotFoundError";
+    setStatus("off", cancelled ? "Nicht verbunden" : "Verbindung fehlgeschlagen",
+      cancelled ? "Keine Auswahl getroffen" : e.message);
+    if (device && device.gatt.connected) device.gatt.disconnect();
+  }
+}
+
+async function findCharacteristics(server) {
+  const services = await server.getPrimaryServices();
+  for (const svc of services) {
+    log(`Dienst ${svc.uuid}`);
+    let chars;
+    try { chars = await svc.getCharacteristics(); } catch { continue; }
+    let rx = null, tx = null;
+    for (const c of chars) {
+      const p = c.properties;
+      log(`  Merkmal ${c.uuid} ${p.notify ? "notify " : ""}${p.indicate ? "indicate " : ""}${p.write ? "write " : ""}${p.writeWithoutResponse ? "writeNR" : ""}`);
+      if (!rx && (p.notify || p.indicate)) rx = c;
+      if (!tx && (p.write || p.writeWithoutResponse)) tx = c;
+    }
+    if (rx && tx) { rxChar = rx; txChar = tx; log(`Nutze ${svc.uuid}`); return; }
+  }
+  throw new Error("Kein passender Datenkanal gefunden. Ist es ein Bluetooth-LE-Adapter?");
+}
+
+function onDisconnected() {
+  log("Verbindung getrennt");
+  setStatus("off", "Nicht verbunden", "Verbindung wurde getrennt");
+  rxChar = txChar = null;
+  if (pending) { pending.reject(new Error("Verbindung getrennt")); pending = null; }
+}
+
+function disconnect() { if (device && device.gatt.connected) device.gatt.disconnect(); }
+
+/* ---------- ELM327-Kommunikation ---------- */
+function onData(ev) {
+  rxBuffer += dec.decode(ev.target.value);
+  const idx = rxBuffer.indexOf(">");
+  if (idx !== -1 && pending) {
+    const raw = rxBuffer.slice(0, idx);
+    rxBuffer = rxBuffer.slice(idx + 1);
+    const p = pending; pending = null; clearTimeout(p.timer);
+    p.resolve(raw);
+  }
+}
+
+async function send(cmd, timeout = 4000) {
+  if (!txChar) throw new Error("Nicht verbunden");
+  rxBuffer = "";
+  const resp = new Promise((resolve, reject) => {
+    pending = { resolve, reject, timer: setTimeout(() => { pending = null; reject(new Error(`Keine Antwort auf ${cmd}`)); }, timeout) };
+  });
+  const data = enc.encode(cmd + "\r");
+  for (let i = 0; i < data.length; i += 20) {
+    const chunk = data.slice(i, i + 20);
+    if (txChar.properties.writeWithoutResponse && txChar.writeValueWithoutResponse) await txChar.writeValueWithoutResponse(chunk);
+    else await txChar.writeValue(chunk);
+  }
+  const raw = await resp;
+  const clean = raw.replace(/\r/g, "\n").split("\n").map(s => s.trim()).filter(s => s && s !== cmd);
+  log(`> ${cmd}\n  ${clean.join(" | ") || "(leer)"}`);
+  return clean;
+}
+
+async function initElm() {
+  await send("ATZ", 6000).catch(() => send("ATZ", 6000));
+  for (const c of ["ATE0", "ATL0", "ATS0", "ATH0", "ATAT1", "ATSP0"]) await send(c);
+  // Protokollsuche anstoßen
+  const r = await send("0100", 15000);
+  if (r.some(l => /UNABLE|ERROR|NO DATA|BUS INIT|CAN ERROR/i.test(l))) {
+    throw new Error("Auto antwortet nicht. Ist die Zündung an?");
+  }
+  const dp = await send("ATDPN").catch(() => []);
+  log("Protokoll: " + (dp[0] || "?"));
+}
+
+/* ---------- Auswertung ---------- */
+function hexOnly(lines) {
+  return lines.filter(l => !/SEARCHING|BUS INIT|STOPPED|^OK$/i.test(l)).map(l => l.replace(/\s/g, "").toUpperCase());
+}
+
+function parseDtcResponse(lines, modeResp) {
+  const hl = hexOnly(lines);
+  if (hl.some(l => /NODATA/.test(l))) return [];
+  const payloads = [];
+  if (hl.some(l => /^[0-9A-F]:/.test(l))) {
+    // CAN Mehrfach-Frame: Zeile mit Länge, dann 0:…, 1:…
+    let buf = "";
+    for (const l of hl) {
+      const m = l.match(/^([0-9A-F]):(.*)$/);
+      if (m) {
+        if (m[1] === "0" && buf) { payloads.push(buf); buf = ""; }
+        buf += m[2];
+      }
+    }
+    if (buf) payloads.push(buf);
+  } else {
+    payloads.push(...hl);
+  }
+  const codes = [];
+  for (let p of payloads) {
+    if (!/^[0-9A-F]+$/.test(p)) continue;
+    const at = p.indexOf(modeResp);
+    if (at !== 0) continue;
+    let data = p.slice(2);
+    if ((data.length / 2) % 2 === 1) data = data.slice(2); // CAN: erstes Byte = Anzahl
+    for (let i = 0; i + 4 <= data.length; i += 4) {
+      const pair = data.slice(i, i + 4);
+      if (pair === "0000") continue;
+      codes.push(decodeDtc(pair));
+    }
+  }
+  return [...new Set(codes)];
+}
+
+function decodeDtc(hex) {
+  const b0 = parseInt(hex.slice(0, 2), 16);
+  const letter = "PCBU"[b0 >> 6];
+  return letter + ((b0 >> 4) & 3) + (b0 & 0xf).toString(16).toUpperCase() + hex.slice(2, 4);
+}
+
+async function readOverview() {
+  try {
+    const r = hexOnly(await send("0101"));
+    const line = r.find(l => l.startsWith("4101"));
+    if (line) {
+      const a = parseInt(line.slice(4, 6), 16);
+      showMil(!!(a & 0x80), a & 0x7f);
+    }
+  } catch (e) { log(e.message); }
+  try {
+    const v = await send("ATRV");
+    if (v[0]) $("vVolt").textContent = v[0].replace("V", " V");
+  } catch (e) { log(e.message); }
+}
+
+function showMil(on, count) {
+  $("vMil").textContent = on ? "AN" : "aus";
+  $("gMil").classList.toggle("mil-on", on);
+  $("vCount").textContent = count;
+}
+
+async function readCodes() {
+  $("btnRead").disabled = true;
+  setStatus("busy", "Lese Fehlerspeicher …", device?.name || "");
+  try {
+    await readOverview();
+    const stored = parseDtcResponse(await send("03", 8000), "43");
+    const pendingC = parseDtcResponse(await send("07", 8000), "47");
+    const permanent = parseDtcResponse(await send("0A", 8000).catch(() => []), "4A");
+    render({ stored, pending: pendingC, permanent }, false);
+  } catch (e) {
+    log("Fehler: " + e.message);
+    renderError(e.message);
+  } finally {
+    if (device && device.gatt.connected) setStatus("on", "Verbunden", device.name || "OBD-Adapter");
+  }
+}
+
+async function clearCodes() {
+  $("confirmBox").hidden = true;
+  setStatus("busy", "Lösche Fehlerspeicher …", device?.name || "");
+  try {
+    const r = hexOnly(await send("04", 8000));
+    if (r.some(l => l.startsWith("44"))) {
+      log("Fehlerspeicher gelöscht");
+      await readCodes();
+    } else {
+      renderError("Das Steuergerät hat das Löschen abgelehnt. Bei manchen Autos muss dafür der Motor aus und die Zündung an sein.");
+    }
+  } catch (e) { renderError(e.message); }
+  finally { if (device && device.gatt.connected) setStatus("on", "Verbunden", device.name || "OBD-Adapter"); }
+}
+
+/* ---------- Darstellung ---------- */
+function render(groups, demo) {
+  const box = $("result"); box.innerHTML = "";
+  const total = groups.stored.length + groups.pending.length + groups.permanent.length;
+  if (demo) {
+    const t = document.createElement("p"); t.className = "empty";
+    t.innerHTML = '<span class="tag">Beispiel</span> Erfundene Daten, nicht von deinem Auto.';
+    box.append(t);
+  }
+  if (total === 0) {
+    const n = document.createElement("div"); n.className = "notice good";
+    n.innerHTML = "<strong>Keine Fehler gespeichert.</strong>Das Motorsteuergerät meldet keine Fehlercodes.";
+    box.append(n);
+  }
+  const defs = [
+    ["stored", "Gespeicherte Fehler", "bestätigt, meist mit Kontrollleuchte"],
+    ["pending", "Sporadische Fehler", "einmal aufgetreten, noch nicht bestätigt"],
+    ["permanent", "Permanente Fehler", "lassen sich nicht löschen, verschwinden nach Reparatur"],
+  ];
+  for (const [key, title, sub] of defs) {
+    if (!groups[key].length) continue;
+    const wrap = document.createElement("div"); wrap.style.display = "grid"; wrap.style.gap = "8px"; wrap.style.marginTop = "12px";
+    wrap.innerHTML = `<div class="group-title">${title} <small>${sub}</small></div>`;
+    const ul = document.createElement("ul"); ul.className = "codes";
+    for (const c of groups[key]) {
+      const li = document.createElement("li");
+      const d = describe(c);
+      li.innerHTML = `<span class="code"></span><span class="desc"><span class="t"></span><small></small></span>`;
+      li.querySelector(".code").textContent = c;
+      li.querySelector(".t").textContent = d.text;
+      li.querySelector("small").textContent = d.area;
+      ul.append(li);
+    }
+    wrap.append(ul); box.append(wrap);
+  }
+  lastCodes = [...groups.stored.map(c => c), ...groups.pending.map(c => c + " (sporadisch)"), ...groups.permanent.map(c => c + " (permanent)")];
+  $("btnCopy").disabled = false;
+}
+
+function renderError(msg) {
+  const box = $("result"); box.innerHTML = "";
+  const n = document.createElement("div"); n.className = "notice err";
+  n.innerHTML = "<strong>Auslesen fehlgeschlagen</strong>"; n.append(msg);
+  box.append(n);
+}
+
+async function copyCodes() {
+  const text = lastCodes.length ? "OBD-Fehlercodes: " + lastCodes.join(", ") : "OBD: keine Fehlercodes";
+  try { await navigator.clipboard.writeText(text); $("btnCopy").textContent = "Kopiert"; }
+  catch { window.getSelection().selectAllChildren($("result")); $("btnCopy").textContent = "Markiert"; }
+  setTimeout(() => $("btnCopy").textContent = "Codes kopieren", 2000);
+}
+
+/* ---------- Beschreibungen ---------- */
+const DTC = {
+  P0010:"Nockenwellenversteller Stromkreis (Bank 1)", P0011:"Nockenwellenposition Einlass – Frühverstellung zu stark (Bank 1)",
+  P0016:"Kurbelwelle/Nockenwelle Position passen nicht zusammen (Bank 1)", P0030:"Lambdasonden-Heizung Stromkreis (Bank 1, Sonde 1)",
+  P0087:"Kraftstoffdruck zu niedrig", P0088:"Kraftstoffdruck zu hoch", P0100:"Luftmassenmesser Stromkreis",
+  P0101:"Luftmassenmesser Bereich/Leistung", P0102:"Luftmassenmesser Signal zu niedrig", P0103:"Luftmassenmesser Signal zu hoch",
+  P0106:"Saugrohrdrucksensor Bereich/Leistung", P0110:"Ansauglufttemperatursensor Stromkreis", P0113:"Ansauglufttemperatursensor Signal zu hoch",
+  P0115:"Kühlmitteltemperatursensor Stromkreis", P0117:"Kühlmitteltemperatursensor Signal zu niedrig", P0118:"Kühlmitteltemperatursensor Signal zu hoch",
+  P0120:"Drosselklappen-/Pedalsensor A Stromkreis", P0121:"Drosselklappensensor A Bereich/Leistung", P0122:"Drosselklappensensor A Signal zu niedrig",
+  P0128:"Kühlmittel unter Thermostat-Regeltemperatur (oft Thermostat defekt)", P0130:"Lambdasonde Stromkreis (Bank 1, Sonde 1)",
+  P0131:"Lambdasonde Spannung zu niedrig (Bank 1, Sonde 1)", P0133:"Lambdasonde reagiert zu langsam (Bank 1, Sonde 1)",
+  P0135:"Lambdasonden-Heizung Stromkreis (Bank 1, Sonde 1)", P0136:"Lambdasonde Stromkreis (Bank 1, Sonde 2)",
+  P0141:"Lambdasonden-Heizung Stromkreis (Bank 1, Sonde 2)", P0171:"Gemisch zu mager (Bank 1)", P0172:"Gemisch zu fett (Bank 1)",
+  P0174:"Gemisch zu mager (Bank 2)", P0175:"Gemisch zu fett (Bank 2)", P0201:"Einspritzdüse Zylinder 1 Stromkreis",
+  P0202:"Einspritzdüse Zylinder 2 Stromkreis", P0203:"Einspritzdüse Zylinder 3 Stromkreis", P0204:"Einspritzdüse Zylinder 4 Stromkreis",
+  P0217:"Motor-Übertemperatur", P0234:"Ladedruck zu hoch (Overboost)", P0299:"Ladedruck zu niedrig (Underboost)",
+  P0300:"Zündaussetzer, mehrere/zufällige Zylinder", P0301:"Zündaussetzer Zylinder 1", P0302:"Zündaussetzer Zylinder 2",
+  P0303:"Zündaussetzer Zylinder 3", P0304:"Zündaussetzer Zylinder 4", P0305:"Zündaussetzer Zylinder 5", P0306:"Zündaussetzer Zylinder 6",
+  P0325:"Klopfsensor 1 Stromkreis", P0335:"Kurbelwellensensor Stromkreis", P0340:"Nockenwellensensor Stromkreis (Bank 1)",
+  P0351:"Zündspule A Stromkreis", P0380:"Glühkerzen Stromkreis", P0400:"Abgasrückführung (AGR) Durchfluss",
+  P0401:"AGR-Durchfluss zu gering", P0402:"AGR-Durchfluss zu hoch", P0403:"AGR-Ventil Stromkreis", P0420:"Katalysator Wirkungsgrad zu gering (Bank 1)",
+  P0430:"Katalysator Wirkungsgrad zu gering (Bank 2)", P0440:"Tankentlüftung (EVAP) Fehlfunktion", P0441:"Tankentlüftung Durchfluss falsch",
+  P0442:"Tankentlüftung kleines Leck", P0455:"Tankentlüftung großes Leck (Tankdeckel prüfen)", P0456:"Tankentlüftung sehr kleines Leck",
+  P0480:"Kühlerlüfter 1 Ansteuerung", P0500:"Geschwindigkeitssensor Fahrzeug", P0505:"Leerlaufregelung Fehlfunktion",
+  P0506:"Leerlaufdrehzahl zu niedrig", P0507:"Leerlaufdrehzahl zu hoch", P0520:"Öldrucksensor/-schalter Stromkreis",
+  P0562:"Bordnetzspannung zu niedrig", P0563:"Bordnetzspannung zu hoch", P0571:"Bremslichtschalter Stromkreis",
+  P0600:"Steuergerät Kommunikation (serielle Verbindung)", P0601:"Steuergerät Speicher-Prüfsumme", P0606:"Steuergerät Prozessor",
+  P0700:"Getriebesteuerung meldet Fehler", P0705:"Gangwahlschalter Stromkreis", P0715:"Getriebe-Eingangsdrehzahlsensor",
+  P0740:"Wandlerüberbrückung Stromkreis", P2002:"Dieselpartikelfilter Wirkungsgrad zu gering (Bank 1)", P2015:"Saugrohrklappen Positionssensor",
+  P2135:"Drosselklappen-/Pedalsensoren A/B passen nicht zusammen", P2187:"Gemisch im Leerlauf zu mager (Bank 1)",
+  P2195:"Lambdasonde Signal hängt mager (Bank 1, Sonde 1)", P2196:"Lambdasonde Signal hängt fett (Bank 1, Sonde 1)",
+  P242F:"Dieselpartikelfilter Ascheladung zu hoch", P2452:"Differenzdrucksensor Partikelfilter Stromkreis",
+  P2463:"Dieselpartikelfilter Rußbeladung zu hoch", U0001:"CAN-Bus Kommunikation (High Speed)", U0100:"Keine Kommunikation mit Motorsteuergerät",
+  U0101:"Keine Kommunikation mit Getriebesteuergerät", U0121:"Keine Kommunikation mit ABS-Steuergerät", U0155:"Keine Kommunikation mit Kombiinstrument",
+};
+const AREA = { P:"Antrieb", C:"Fahrwerk", B:"Karosserie", U:"Netzwerk/Kommunikation" };
+const PSUB = {
+  "0":"Kraftstoff/Luft, Hilfsemissionen", "1":"Kraftstoff- und Luftzumessung", "2":"Kraftstoff- und Luftzumessung (Einspritzung)",
+  "3":"Zündsystem / Zündaussetzer", "4":"Abgasreinigung", "5":"Geschwindigkeit, Leerlauf", "6":"Steuergerät und Ausgänge",
+  "7":"Getriebe", "8":"Getriebe", "9":"Getriebe", "A":"Hybridantrieb", "B":"Hybridantrieb", "C":"Hybridantrieb",
+};
+function describe(code) {
+  const generic = code[1] === "0" || (code[0] === "P" && code[1] === "2") || (code[0] === "U" && code[1] === "0");
+  const known = DTC[code];
+  let area = AREA[code[0]] || "";
+  if (code[0] === "P" && PSUB[code[2]]) area += " · " + PSUB[code[2]];
+  if (!generic) area += " · herstellerspezifisch";
+  return {
+    text: known || (generic ? "Standardcode, Beschreibung nicht in der Liste" : "Herstellerspezifischer Code"),
+    area,
+  };
+}
+
+/* ---------- Ereignisse ---------- */
+$("btnConnect").addEventListener("click", connect);
+$("btnDisconnect").addEventListener("click", disconnect);
+$("btnRead").addEventListener("click", readCodes);
+$("btnCopy").addEventListener("click", copyCodes);
+$("btnClear").addEventListener("click", () => { $("confirmBox").hidden = false; });
+$("btnClearNo").addEventListener("click", () => { $("confirmBox").hidden = true; });
+$("btnClearYes").addEventListener("click", clearCodes);
+$("btnDemo").addEventListener("click", () => {
+  showMil(true, 2);
+  render({ stored: ["P0301", "P0171"], pending: ["P0420"], permanent: [] }, true);
+});
+
+if (!navigator.bluetooth) $("unsupported").hidden = false;
+
+/* Selbsttest des Parsers (nur im Protokoll sichtbar) */
+(function selfTest() {
+  const a = parseDtcResponse(["43 01 33 00 00 00 00"], "43");           // ältere Protokolle
+  const b = parseDtcResponse(["43020301 0420"], "43");                   // CAN, ein Frame
+  const c = parseDtcResponse(["00A", "0:430401010171", "1:03010420"], "43"); // CAN, mehrere Frames
+  const ok = a.join() === "P0133" && b.join() === "P0301,P0420" && c.join() === "P0101,P0171,P0301,P0420";
+  log("Parser-Selbsttest: " + (ok ? "OK" : "FEHLER " + JSON.stringify([a, b, c])));
+})();
+</script>
+</body>
+</html>
